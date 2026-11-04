@@ -356,4 +356,48 @@ describe('CanvasTextTexture', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('closes a queued source when its last owner leaves and redraws on return', async () => {
+    class Bitmap {
+      width = 24;
+      height = 12;
+      close = vi.fn();
+    }
+    vi.stubGlobal('ImageBitmap', Bitmap);
+    try {
+      const stage = {
+        contextState: 'running',
+        platform: { getTimeStamp: () => 0 },
+        defaultTexture: null,
+      } as unknown as Stage;
+      const txManager = new CoreTextureManager(stage, {
+        maxRetryCount: 5,
+        createImageBitmapSupport: 'auto',
+      });
+      txManager.renderer = mock<CoreRenderer>({ mode: 'webgl' });
+      const first = new Bitmap();
+      const second = new Bitmap();
+      const render = vi
+        .fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second);
+      const texture = txManager.createTexture('CanvasTextTexture', { render });
+
+      texture.setRenderableOwner('node', true);
+      expect(txManager.isProcessingTexture(texture)).toBe(true);
+
+      texture.setRenderableOwner('node', false);
+      await Promise.resolve();
+
+      expect(texture.state).toBe('initial');
+      expect(txManager.isProcessingTexture(texture)).toBe(false);
+      expect(first.close).toHaveBeenCalledTimes(1);
+
+      texture.setRenderableOwner('node', true);
+      expect(texture.textureData?.data).toBe(second);
+      expect(render).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

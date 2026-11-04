@@ -142,6 +142,13 @@ export class CanvasTextTexture extends Texture {
     super.freeTextureData();
   }
 
+  override cancel(): void {
+    super.cancel();
+    // A queued source never reached the context texture, so nothing else
+    // releases it; the next load renders a fresh one.
+    if (this.state === 'initial') this.disposeSource();
+  }
+
   override free(): void {
     super.free();
     this.disposeSource();
