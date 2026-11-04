@@ -217,13 +217,7 @@ export class ImageTexture extends Texture {
     generation: number,
   ): TextureData {
     if (generation !== this.loadGeneration) {
-      if (
-        hasImageBitmap === true &&
-        resp.data instanceof ImageBitmap &&
-        (typeof this.props.src === 'string' || this.props.src instanceof Blob)
-      ) {
-        resp.data.close();
-      }
+      this.closeOwnedBitmap(resp.data);
       return { data: null };
     }
     if (resp.data === null) {
@@ -238,6 +232,33 @@ export class ImageTexture extends Texture {
       premultiplyAlpha: this.props.premultiplyAlpha ?? true,
       premultiplied: resp.premultiplied,
     };
+  }
+
+  override cancel(): void {
+    const data = this.textureData?.data;
+    super.cancel();
+    // textureData is only cleared when the cancel took effect.
+    if (data != null && this.textureData === null) {
+      this.closeOwnedBitmap(data);
+    }
+  }
+
+  protected override discardTextureData(data: TextureData): void {
+    this.closeOwnedBitmap(data.data);
+  }
+
+  /**
+   * Close an ImageBitmap this texture decoded itself; caller-provided
+   * sources belong to the caller.
+   */
+  private closeOwnedBitmap(data: TextureData['data'] | undefined): void {
+    if (
+      hasImageBitmap === true &&
+      data instanceof ImageBitmap &&
+      (typeof this.props.src === 'string' || this.props.src instanceof Blob)
+    ) {
+      data.close();
+    }
   }
 
   determineImageTypeAndLoadImage() {

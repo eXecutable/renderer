@@ -570,10 +570,21 @@ export abstract class Texture extends EventEmitter {
     return sourceOrPromise.then((data) => {
       if (generation === this.loadGeneration) {
         this.textureData = data;
+      } else {
+        this.discardTextureData(data);
       }
       return data;
     });
   }
+
+  /**
+   * Release source data that resolved after its load was cancelled.
+   *
+   * @remarks
+   * Subclasses that own their decoded data (e.g. an ImageBitmap) override
+   * this to free it; nothing else references it.
+   */
+  protected discardTextureData(_data: TextureData): void {}
 
   /**
    * Task for queueMicrotask to free texture data.
