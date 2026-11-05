@@ -107,11 +107,9 @@ function makeDrawFrameHarness() {
       addQuad,
       invalidateQuadBuffer: vi.fn(),
       rttNodes: [],
-      createCtxTexture: (texture: Texture) => ({
-        state: 'freed',
-        load: (): void => {
-          texture.setState('loaded', { w: 120, h: 40 });
-        },
+      createCtxTexture: () => ({
+        load: () => ({ w: 120, h: 40 }),
+        release: vi.fn(),
       }),
     },
     renderListDirty: true,

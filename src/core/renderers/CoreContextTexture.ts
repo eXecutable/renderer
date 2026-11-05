@@ -17,13 +17,20 @@
  * limitations under the License.
  */
 
+import type { Dimensions } from '../../common/CommonTypes.js';
 import type { TextureMemoryManager } from '../TextureMemoryManager.js';
 import type { Texture } from '../textures/Texture.js';
 
+/**
+ * Renderer-side resources for one upload of a {@link Texture}.
+ *
+ * @remarks
+ * Holds no lifecycle state: {@link load} reports its outcome to the caller
+ * and the {@link Texture} records it. Each load creates a new instance.
+ */
 export abstract class CoreContextTexture {
   readonly textureSource: Texture;
   private memManager: TextureMemoryManager;
-  public state: 'freed' | 'loading' | 'loaded' | 'failed' = 'freed';
 
   constructor(memManager: TextureMemoryManager, textureSource: Texture) {
     this.memManager = memManager;
@@ -34,11 +41,31 @@ export abstract class CoreContextTexture {
     this.memManager.setTextureMemUse(this.textureSource, byteSize);
   }
 
-  abstract load(): void;
-  abstract release(): void;
-  abstract free(): void;
+  /**
+   * Create the drawing resources from the texture's source data.
+   *
+   * @returns
+   * The loaded size, or `null` when the context was lost during the upload.
+   * Throws when the upload fails.
+   */
+  abstract load(): Dimensions | null;
+
+  /**
+   * Free everything allocated for drawing and zero the memory count.
+   */
+  release(): void {
+    this.releaseResources();
+    this.setTextureMemUse(0);
+  }
+
+  /**
+   * Drop handles the browser has already discarded with the lost context.
+   */
+  invalidateContext(): void {}
 
   get renderable(): boolean {
     return this.textureSource.renderable;
   }
+
+  protected abstract releaseResources(): void;
 }

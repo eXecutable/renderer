@@ -79,10 +79,9 @@ export class WebGlCtxRenderTexture extends WebGlCtxTexture {
     };
   }
 
-  override free(): void {
-    super.free();
+  protected override releaseResources(): void {
+    super.releaseResources();
 
-    // Delete the framebuffer
     this.glw.deleteFramebuffer(this.framebuffer);
     this.framebuffer = null;
   }

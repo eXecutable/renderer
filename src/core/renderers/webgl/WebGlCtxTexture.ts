@@ -29,25 +29,24 @@ import { hasImageBitmap } from '../../platforms/capabilities.js';
 
 const TRANSPARENT_TEXTURE_DATA = new Uint8Array([0, 0, 0, 0]);
 
+class ContextLostError extends Error {}
+
 /**
  * A wrapper around a WebGLTexture that handles loading the texture data
  * from a Texture source and uploading it to the GPU as well as freeing
  * the uploaded texture.
  *
  * @remarks
- * When accessing the ctxTexture property, the texture will be loaded if
- * it hasn't been already. ctxTexture will always return a valid WebGLTexture
- * and trigger the loading/uploading of the texture's data if it hasn't been
- * loaded yet.
+ * ctxTexture is `null` until {@link CoreContextTexture.load} has uploaded
+ * the data, and again after release or context loss. Reloading goes through
+ * the owning {@link Texture}, which fetches fresh data and creates a new
+ * instance.
  */
 export class WebGlCtxTexture extends CoreContextTexture {
   protected _nativeCtxTexture: WebGLTexture | null = null;
-  private contextInvalidated = false;
 
-  invalidateContext(): void {
-    this.contextInvalidated = true;
+  override invalidateContext(): void {
     this._nativeCtxTexture = null;
-    this.state = 'freed';
   }
   private _w = 0;
   private _h = 0;
@@ -68,38 +67,20 @@ export class WebGlCtxTexture extends CoreContextTexture {
   }
 
   /**
-   * GL error check with direct state marking
-   * Uses cached error result to minimize function calls
+   * Throw on a GL error, with {@link ContextLostError} for a lost context.
    */
-  private checkGLError(): boolean {
-    // Skip if already failed to prevent double-processing
-    if (this.state === 'failed') {
-      return true;
+  private checkGLError(): void {
+    if (isProductionEnvironment === true) return;
+    const error = this.glw.getError();
+    if (error === 0) return;
+    if (error === 0x9242 || this.glw.isContextLost() === true) {
+      this.textureSource.notifyContextLost();
+      throw new ContextLostError();
     }
-
-    if (isProductionEnvironment === false) {
-      const error = this.glw.getError();
-      if (error !== 0) {
-        if (error === 0x9242 || this.glw.isContextLost() === true) {
-          this.textureSource.notifyContextLost();
-          return true;
-        }
-        this.state = 'failed';
-        this.textureSource.setState(
-          'failed',
-          new Error(`WebGL Error: ${error}`),
-        );
-        return true;
-      }
-    }
-    return false;
+    throw new Error(`WebGL Error: ${error}`);
   }
 
   get ctxTexture(): WebGLTexture | null {
-    if (this.state === 'freed') {
-      this.load();
-      return null;
-    }
     return this._nativeCtxTexture;
   }
 
@@ -112,77 +93,30 @@ export class WebGlCtxTexture extends CoreContextTexture {
   }
 
   /**
-   * Load the texture data from the Texture source and upload it to the GPU
-   *
-   * @remarks
-   * This method is called automatically when accessing the ctxTexture property
-   * if the texture hasn't been loaded yet. But it can also be called manually
-   * to force the texture to be pre-loaded prior to accessing the ctxTexture
-   * property.
+   * Create the GL texture and upload the source data to the GPU
    */
-  load(): void {
-    // If the texture is already loading or loaded, return early
-    if (this.state === 'loading' || this.state === 'loaded') {
-      return;
-    }
-
-    this.state = 'loading';
-    this.textureSource.setState('loading');
-
-    // Await the native texture creation to ensure GPU buffer is fully allocated
+  load(): Dimensions | null {
     this._nativeCtxTexture = this.createNativeCtxTexture();
 
     if (this._nativeCtxTexture === null) {
       if (this.glw.isContextLost() === true) {
         this.textureSource.notifyContextLost();
-        return;
+        return null;
       }
-      this.state = 'failed';
-      const error = new Error('Could not create WebGL Texture');
-      this.textureSource.setState('failed', error);
-      console.error('Could not create WebGL Texture');
-      throw error;
+      throw new Error('Could not create WebGL Texture');
     }
 
+    let size: Dimensions;
     try {
-      const { w, h } = this.onLoadRequest();
-      if (this.contextInvalidated === true) return;
-
-      // If the texture has been freed while loading, return early.
-      // Type assertion needed because state could change during async operations
-      if ((this.state as string) === 'freed') {
-        return;
-      }
-
-      this.state = 'loaded';
-      this._w = w;
-      this._h = h;
-      // Update the texture source's width and height so that it can be used
-      // for rendering.
-      this.textureSource.setState('loaded', { w, h });
-
-      // cleanup source texture data next tick
-      // This is done using queueMicrotask to ensure it runs after the current
-      // event loop tick, allowing the texture to be fully loaded and bound
-      // to the GL context before freeing the source data.
-      // This is important to avoid issues with the texture data being
-      // freed while the texture is still being loaded or used.
-      this.textureSource.freeTextureData();
+      size = this.onLoadRequest();
     } catch (err: unknown) {
-      if (this.contextInvalidated === true) return;
-      // If the texture has been freed while loading, return early.
-      // Type assertion needed because state could change during async operations
-      if ((this.state as string) === 'freed') {
-        return;
-      }
-
-      this.state = 'failed';
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.textureSource.setState('failed', error);
-      this.textureSource.freeTextureData();
-      console.error(err);
-      throw error; // Re-throw to propagate the error
+      if (err instanceof ContextLostError) return null;
+      throw err;
     }
+
+    this._w = size.w;
+    this._h = size.h;
+    return size;
   }
 
   /**
@@ -241,9 +175,7 @@ export class WebGlCtxTexture extends CoreContextTexture {
       glw.texImage2D(0, format, format, glw.UNSIGNED_BYTE, tdata);
 
       // Check for errors after compressed texture operations
-      if (this.checkGLError() === true) {
-        throw new Error('WebGL texture upload failed');
-      }
+      this.checkGLError();
 
       this.setTextureMemUse(h * w * formatBytes * memoryPadding);
     } else if (tdata === null) {
@@ -268,9 +200,7 @@ export class WebGlCtxTexture extends CoreContextTexture {
       glw['upload' + type]!(this._nativeCtxTexture, tdata);
 
       // Check for errors after compressed texture operations
-      if (this.checkGLError() === true) {
-        throw new Error('WebGL texture upload failed');
-      }
+      this.checkGLError();
 
       w = tdata.w;
       h = tdata.h;
@@ -293,9 +223,7 @@ export class WebGlCtxTexture extends CoreContextTexture {
       glw.texImage2D(0, format, w, h, 0, format, glw.UNSIGNED_BYTE, tdata);
 
       // Check for errors after compressed texture operations
-      if (this.checkGLError() === true) {
-        throw new Error('WebGL texture upload failed');
-      }
+      this.checkGLError();
 
       this.setTextureMemUse(w * h * formatBytes);
     } else {
@@ -310,36 +238,14 @@ export class WebGlCtxTexture extends CoreContextTexture {
     };
   }
 
-  /**
-   * Free the WebGLTexture from the GPU
-   *
-   * @returns
-   */
-  free() {
-    if (this.state === 'freed') {
-      return;
-    }
-
-    this.state = 'freed';
-    this.textureSource.setState('freed');
-    this.release();
-  }
-
-  /**
-   * Release the WebGLTexture from the GPU without changing state
-   */
-  release(): void {
+  protected releaseResources(): void {
     this._w = 0;
     this._h = 0;
 
     if (this._nativeCtxTexture !== null) {
       this.glw.deleteTexture(this._nativeCtxTexture);
-      this.setTextureMemUse(0);
       this._nativeCtxTexture = null;
     }
-
-    // if the texture still has source data, free it
-    this.textureSource.freeTextureData();
   }
 
   /**

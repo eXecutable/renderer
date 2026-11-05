@@ -373,7 +373,7 @@ export class CoreTextureManager extends EventEmitter {
     this.restoreTextures.delete(texture);
     this.pendingContextLoads.add(texture);
 
-    texture.setState('loading');
+    texture.markLoading();
 
     // Get texture data - early return on failure. In-memory sources resolve
     // synchronously so canvas text enqueues within the same update pass.
@@ -425,13 +425,6 @@ export class CoreTextureManager extends EventEmitter {
     generation: number,
     priority: boolean | undefined,
   ): void {
-    // Sources report failure via setState('failed') and resolve with
-    // { data: null }; a null data alone is valid (e.g. RenderTexture).
-    if (texture.state === 'failed') {
-      this.pendingContextLoads.delete(texture);
-      return;
-    }
-
     // Handle non-image and priority textures: upload immediately
     if (texture.type !== TextureType.image || priority === true) {
       try {
@@ -465,12 +458,13 @@ export class CoreTextureManager extends EventEmitter {
       // path reloads it.
       return;
     }
+    this.pendingContextLoads.delete(texture);
+    // Freed or cancelled while loading; nobody is waiting for this result.
+    if (texture.state !== 'loading') return;
     console.error(message, err);
-    texture.setState(
-      'failed',
+    texture.markFailed(
       err instanceof Error ? err : new TextureError(String(err)),
     );
-    this.pendingContextLoads.delete(texture);
   }
 
   uploadTexture(texture: Texture): void {
@@ -485,29 +479,21 @@ export class CoreTextureManager extends EventEmitter {
       this.stage.txMemManager.criticalCleanupRequested === true
     ) {
       // we're at a critical memory threshold, don't upload textures
-      texture.setState(
-        'failed',
+      texture.markFailed(
         new TextureError(TextureErrorCode.MEMORY_THRESHOLD_EXCEEDED),
       );
       finish();
       return;
     }
 
-    if (texture.state === 'failed' || texture.state === 'freed') {
-      // don't upload failed or freed textures
-      finish();
-      return;
-    }
-
-    if (texture.state === 'loaded') {
-      // already loaded
+    // Freed, cancelled or already settled since it was queued.
+    if (texture.state !== 'loading') {
       finish();
       return;
     }
 
     if (texture.textureData === null) {
-      texture.setState(
-        'failed',
+      texture.markFailed(
         new TextureError(
           TextureErrorCode.TEXTURE_DATA_NULL,
           'Texture data is null, cannot upload texture',
@@ -518,13 +504,13 @@ export class CoreTextureManager extends EventEmitter {
     }
 
     const coreContext = texture.loadCtxTexture();
-    if (coreContext !== null && coreContext.state === 'loaded') {
-      texture.setState('loaded');
-      finish();
-      return;
+    const dimensions = coreContext.load();
+    // null: the context was lost and the restore path reloads the texture.
+    // A replaced ctxTexture: the texture was freed during the upload.
+    if (dimensions !== null && texture.ctxTexture === coreContext) {
+      texture.markLoaded(dimensions);
+      texture.freeTextureData();
     }
-
-    coreContext.load();
     finish();
   }
 

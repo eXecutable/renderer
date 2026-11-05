@@ -51,57 +51,29 @@ export class CanvasTexture extends CoreContextTexture {
    */
   protected tintCache: Map<string, HTMLCanvasElement> | undefined;
 
-  load(): void {
-    // Capture textureData synchronously - a pending
-    // freeTextureDataTask microtask could null textureSource.textureData
-    // during the first async suspension, causing onLoadRequest to fail.
+  load(): Dimensions {
     const textureData = this.textureSource.textureData;
     assertTruthy(textureData?.data, 'Texture data is null before load');
 
-    this.textureSource.setState('loading');
-
-    try {
-      const size = this.onLoadRequest(textureData.data);
-
-      // Guard against the texture being freed while the load was in flight
-      if (this.textureSource.state === 'freed') {
-        this.image = undefined;
-        return;
-      }
-
-      this.textureSource.setState('loaded', size);
-      this.textureSource.freeTextureData();
-      this.updateMemSize();
-    } catch (err) {
-      this.textureSource.setState('failed', err as Error);
-      this.textureSource.freeTextureData();
-      throw err;
-    }
+    const size = this.onLoadRequest(textureData.data);
+    this.updateMemSize(size);
+    return size;
   }
 
-  release(): void {
+  protected releaseResources(): void {
     this.image = undefined;
     this.tintCache = undefined;
   }
 
-  free(): void {
-    this.release();
-    this.textureSource.setState('freed');
-    this.setTextureMemUse(0);
-    this.textureSource.freeTextureData();
-  }
-
-  updateMemSize(): void {
+  updateMemSize(
+    dimensions: Dimensions | null = this.textureSource.dimensions,
+  ): void {
     // Counting memory usage for:
     // - main image
     // - one tinted image per cached color
     const mult = 4 * (1 + (this.tintCache?.size ?? 0));
-    if (this.textureSource.dimensions) {
-      this.setTextureMemUse(
-        this.textureSource.dimensions.w *
-          this.textureSource.dimensions.h *
-          mult,
-      );
+    if (dimensions) {
+      this.setTextureMemUse(dimensions.w * dimensions.h * mult);
     }
   }
 

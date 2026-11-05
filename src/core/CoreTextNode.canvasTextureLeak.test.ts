@@ -130,15 +130,14 @@ function makeDrawFrameHarness() {
       invalidateQuadBuffer: vi.fn(),
       rttNodes: [],
       createCtxTexture: (texture: Texture) => ({
-        state: 'freed',
-        load: (): void => {
+        load: () => {
           (txMemManagerRef as TextureMemoryManager).setTextureMemUse(
             texture,
             120 * 40 * 4,
           );
-          texture.setState('loaded', { w: 120, h: 40 });
+          return { w: 120, h: 40 };
         },
-        free: vi.fn(),
+        release: vi.fn(),
       }),
     },
     renderListDirty: true,
@@ -346,13 +345,13 @@ describe('CoreTextNode canvas text — GPU texture lifecycle', () => {
     // Allocate the GPU-side resource but leave the texture reporting
     // 'loading', the window a mid-upload teardown lands in.
     const ctx = texture.loadCtxTexture();
-    texture.setState('loading');
+    texture.markLoading();
     expect(texture.ctxTexture).toBeDefined();
 
     texture.destroy();
 
     // Gating the free on state === 'loaded' would strand this ctxTexture.
-    expect(ctx.free).toHaveBeenCalled();
+    expect(ctx.release).toHaveBeenCalled();
     expect(texture.ctxTexture).toBeUndefined();
   });
 
@@ -430,7 +429,7 @@ describe('CoreTextNode canvas text — GPU texture lifecycle', () => {
     for (let i = 0; i < N; i++) {
       const texture = mock<Texture>();
       texture.type = TextureType.image;
-      texture.state = 'loaded';
+      Object.assign(texture, { state: 'loaded' });
       (texture as { renderable: boolean }).renderable = false;
       texture.preventCleanup = false;
       texture.canBeCleanedUp.mockReturnValue(true);
@@ -467,7 +466,7 @@ describe('CoreTextNode canvas text — GPU texture lifecycle', () => {
     for (let i = 0; i < N; i++) {
       const texture = mock<Texture>();
       texture.type = TextureType.image;
-      texture.state = 'loaded';
+      Object.assign(texture, { state: 'loaded' });
       (texture as { renderable: boolean }).renderable = false;
       texture.preventCleanup = false;
       texture.canBeCleanedUp.mockReturnValue(true);
@@ -502,7 +501,7 @@ describe('CoreTextNode canvas text — GPU texture lifecycle', () => {
       for (let i = 0; i < N; i++) {
         const texture = mock<Texture>();
         texture.type = TextureType.image;
-        texture.state = 'loaded';
+        Object.assign(texture, { state: 'loaded' });
         (texture as { renderable: boolean }).renderable = false;
         texture.preventCleanup = false;
         // Use the REAL canBeCleanedUp()-equivalent gating behavior: freshly

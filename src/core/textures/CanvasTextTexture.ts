@@ -168,11 +168,6 @@ export class CanvasTextTexture extends Texture {
     this.disposeSource();
   }
 
-  override destroy(): void {
-    super.destroy();
-    this.disposeSource();
-  }
-
   // Textures with an explicit stable key (see makeCanvasTextCacheKey) are
   // shared via the manager's keyCache, which is stage-scoped; ownership is
   // tracked per node via renderableOwners. Key-less textures stay uncached.

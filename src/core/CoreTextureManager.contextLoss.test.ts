@@ -23,20 +23,22 @@ describe('CoreTextureManager context loss', () => {
       maxRetryCount: 5,
       createImageBitmapSupport: 'full',
     });
-    const texture = {
+    const fake = {
       type: TextureType.image,
-      state: 'initial',
+      state: 'initial' as TextureState,
       renderableOwners: new Set(['node']),
       preventCleanup: false,
-      setState: vi.fn((state: TextureState) => {
-        texture.state = state;
+      markLoading: vi.fn(() => {
+        fake.state = 'loading';
       }),
+      markFailed: vi.fn(),
       invalidateContext: vi.fn(() => {
-        texture.state = 'freed';
+        fake.state = 'freed';
       }),
       getTextureData: vi.fn(() => decode),
       load: vi.fn(),
-    } as unknown as Texture;
+    };
+    const texture = fake as unknown as Texture;
 
     manager.loadTexture(texture);
     manager.invalidateContext();
@@ -44,7 +46,7 @@ describe('CoreTextureManager context loss', () => {
     finishDecode({ data: new Uint8Array([0, 0, 0, 0]) });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(texture.invalidateContext).toHaveBeenCalledOnce();
-    expect(texture.setState).not.toHaveBeenCalledWith('failed');
+    expect(fake.markFailed).not.toHaveBeenCalled();
 
     stage.contextState = 'running';
     manager.restoreContext();

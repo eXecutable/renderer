@@ -116,7 +116,7 @@ describe('CanvasTextTexture', () => {
     // Simulate a queued mid-upload load with two owners.
     texture.setRenderableOwner('a', true);
     texture.setRenderableOwner('b', true);
-    texture.setState('loading');
+    texture.markLoading();
     txManager.enqueueUploadTexture(texture);
 
     texture.releaseOwner('a');
@@ -293,9 +293,9 @@ describe('CanvasTextTexture', () => {
         .mockReturnValueOnce(second);
       const texture = txManager.createTexture('CanvasTextTexture', { render });
       texture.getTextureData();
-      texture.state = 'loaded';
+      texture.markLoaded({ w: 24, h: 12 });
       texture.ctxTexture = mock<NonNullable<typeof texture.ctxTexture>>({
-        free: vi.fn(),
+        release: vi.fn(),
       });
       memory.setTextureMemUse(texture, 24 * 12 * 4);
       vi.advanceTimersByTime(2100); // past the manager's startup grace period

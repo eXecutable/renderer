@@ -168,13 +168,11 @@ export class ImageTexture extends Texture {
         type === 'compressed' ||
         (typeof src === 'string' && isCompressedTextureContainer(src) === true)
       ) {
-        const err = new Error(
+        throw new Error(
           `ImageTexture: Compressed textures are not supported in Canvas2D render mode (src: ${String(
             src,
           )})`,
         );
-        this.setState('failed', err);
-        return { data: null };
       }
     }
 
@@ -183,10 +181,7 @@ export class ImageTexture extends Texture {
       result = this.determineImageTypeAndLoadImage();
     } catch (e) {
       if (generation !== this.loadGeneration) return { data: null };
-      this.setState('failed', e as Error);
-      return {
-        data: null,
-      };
+      throw e;
     }
     // TextureData always defines 'data' explicitly (even as null); a Promise
     // never has a 'data' property, so this distinguishes the two without an
@@ -198,10 +193,7 @@ export class ImageTexture extends Texture {
       (resp) => this.finishTextureSource(resp, generation),
       (e: unknown) => {
         if (generation !== this.loadGeneration) return { data: null };
-        this.setState('failed', e as Error);
-        return {
-          data: null,
-        };
+        throw e;
       },
     );
   }
@@ -221,10 +213,7 @@ export class ImageTexture extends Texture {
       return { data: null };
     }
     if (resp.data === null) {
-      this.setState('failed', Error('ImageTexture: No image data'));
-      return {
-        data: null,
-      };
+      throw new Error('ImageTexture: No image data');
     }
 
     return {

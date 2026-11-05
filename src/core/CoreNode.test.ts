@@ -118,7 +118,7 @@ describe('CoreNode', () => {
       node.update(0, clippingRect);
       expect(node.isRenderable).toBe(false);
 
-      node.texture.state = 'loaded';
+      Object.assign(node.texture, { state: 'loaded' });
       node.setUpdateType(UpdateType.IsRenderable);
       node.update(1, clippingRect);
 
@@ -489,7 +489,7 @@ describe('CoreNode', () => {
     it('should enable texture autosize when texture is present', () => {
       const node = new CoreNode(stage, defaultProps);
       const mockTexture = mock<ImageTexture>();
-      mockTexture.state = 'loading';
+      Object.assign(mockTexture, { state: 'loading' });
 
       node.texture = mockTexture;
       node.autosize = true;
@@ -513,7 +513,7 @@ describe('CoreNode', () => {
       const parent = new CoreNode(stage, defaultProps);
       const child = new CoreNode(stage, defaultProps);
       const mockTexture = mock<ImageTexture>();
-      mockTexture.state = 'loading';
+      Object.assign(mockTexture, { state: 'loading' });
 
       child.parent = parent;
       parent.texture = mockTexture;
@@ -534,7 +534,7 @@ describe('CoreNode', () => {
 
       // Add texture - should switch to texture autosize
       const mockTexture = mock<ImageTexture>();
-      mockTexture.state = 'loading';
+      Object.assign(mockTexture, { state: 'loading' });
       parent.texture = mockTexture;
 
       expect((parent as any).autosizer).toBeTruthy();
@@ -544,7 +544,7 @@ describe('CoreNode', () => {
       const parent = new CoreNode(stage, defaultProps);
       const child = new CoreNode(stage, defaultProps);
       const mockTexture = mock<ImageTexture>();
-      mockTexture.state = 'loading';
+      Object.assign(mockTexture, { state: 'loading' });
 
       child.parent = parent;
       parent.texture = mockTexture;

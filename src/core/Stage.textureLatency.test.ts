@@ -23,7 +23,10 @@ class FakeLoadedTexture extends EventEmitter {
   retryCount = 0;
   maxRetryCount = 5;
 
-  constructor(private loadedW = 8, private loadedH = 8) {
+  constructor(
+    private loadedW = 8,
+    private loadedH = 8,
+  ) {
     super();
   }
 
@@ -35,15 +38,29 @@ class FakeLoadedTexture extends EventEmitter {
     this.emit(state, payload);
   }
 
+  markLoading(): void {
+    this.setState('loading');
+  }
+
+  markLoaded(dimensions: { w: number; h: number }): void {
+    this.setState('loaded', dimensions);
+  }
+
+  markFailed(): void {
+    this.setState('failed');
+  }
+
+  freeTextureData(): void {}
+
   setRenderableOwner(_id: string | number, _renderable: boolean): void {}
 
-  loadCtxTexture(): { state: string; load: () => void } {
-    return {
-      state: 'freed',
-      load: (): void => {
-        this.setState('loaded', { w: this.loadedW, h: this.loadedH });
-      },
+  ctxTexture: { load: () => { w: number; h: number } } | undefined;
+
+  loadCtxTexture(): { load: () => { w: number; h: number } } {
+    this.ctxTexture = {
+      load: () => ({ w: this.loadedW, h: this.loadedH }),
     };
+    return this.ctxTexture;
   }
 }
 
@@ -170,8 +187,9 @@ describe('Plan 1 texture upload latency', () => {
 
   it('CoreNode.loadTexture fires loaded handler on next microtask for cached textures', async () => {
     const stage = makeMockStage();
-    const texture = new FakeLoadedTexture() as unknown as Texture;
-    texture.setState('loaded', { w: 8, h: 8 });
+    const fake = new FakeLoadedTexture();
+    fake.markLoaded({ w: 8, h: 8 });
+    const texture = fake as unknown as Texture;
 
     const node = new CoreNode(stage, makeNodeProps({ src: null, texture }));
     node.updateType = 0;

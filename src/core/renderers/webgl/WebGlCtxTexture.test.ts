@@ -149,7 +149,10 @@ const UNPACK_PA = 0x9241;
  * we rename the class using defineProperty.
  */
 class FakeHTMLImageElement {
-  constructor(public width = 10, public height = 10) {}
+  constructor(
+    public width = 10,
+    public height = 10,
+  ) {}
 }
 Object.defineProperty(FakeHTMLImageElement, 'name', {
   value: 'HTMLImageElement',
@@ -178,7 +181,6 @@ function makeCtxTextureForUnpackTest(textureData: TextureData) {
   (instance as any).glw = glw;
   // Provide a non-null native texture handle so onLoadRequest doesn't bail out.
   (instance as any)._nativeCtxTexture = {};
-  (instance as any).state = 'loading';
   (instance as any).textureSource = { textureData };
   (instance as any).setTextureMemUse = vi.fn();
 

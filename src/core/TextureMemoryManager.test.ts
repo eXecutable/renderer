@@ -45,7 +45,7 @@ function makeTexture(memUsed = 1024): Texture {
   const texture = mock<Texture>();
   texture.memUsed = memUsed;
   texture.type = TextureType.image;
-  texture.state = 'loaded';
+  Object.assign(texture, { state: 'loaded' });
   (texture as { renderable: boolean }).renderable = false;
   texture.preventCleanup = false;
   texture.canBeCleanedUp.mockReturnValue(true);

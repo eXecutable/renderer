@@ -177,8 +177,7 @@ export abstract class Texture extends EventEmitter {
   private _dimensions: Dimensions | null = null;
   private _error: TextureError | null = null;
 
-  // aggregate state
-  public state: TextureState = 'initial';
+  private _state: TextureState = 'initial';
 
   readonly renderableOwners: Set<string | number> = new Set();
 
@@ -234,6 +233,19 @@ export abstract class Texture extends EventEmitter {
   constructor(protected txManager: CoreTextureManager) {
     super();
     this.maxRetryCount = txManager.maxRetryCount;
+  }
+
+  /**
+   * Lifecycle state.
+   *
+   * @remarks
+   * Only the texture changes it. {@link CoreTextureManager} reports load
+   * outcomes through {@link markLoading}, {@link markLoaded} and
+   * {@link markFailed}; context textures and sources report to the manager
+   * by returning or throwing.
+   */
+  get state(): TextureState {
+    return this._state;
   }
 
   get dimensions(): Dimensions | null {
@@ -383,39 +395,59 @@ export abstract class Texture extends EventEmitter {
   onChangeIsRenderable?(isRenderable: boolean): void;
 
   /**
-   * Load the core context texture for this Texture.
-   * The ctxTexture is created by the renderer and lives on the GPU.
+   * Create the context texture for a new upload.
    *
-   * @returns
+   * @remarks
+   * A context texture holds one upload, so one left by an earlier load is
+   * released first.
    */
   loadCtxTexture(): CoreContextTexture {
-    if (this.ctxTexture === undefined) {
-      this.ctxTexture = this.txManager.renderer.createCtxTexture(this);
-      this.txManager.trackContextTexture(this);
-    }
-
+    this.ctxTexture?.release();
+    this.ctxTexture = this.txManager.renderer.createCtxTexture(this);
+    this.txManager.trackContextTexture(this);
     return this.ctxTexture;
   }
 
-  /**
-   * Free the core context texture for this Texture.
-   *
-   * @remarks
-   * The ctxTexture is created by the renderer and lives on the GPU.
-   */
-  free(): void {
-    this.ctxTexture?.free();
-    this.ctxTexture = undefined;
-    this.txManager.untrackContextTexture(this);
+  /** The manager started fetching this texture's data. */
+  markLoading(): void {
+    this.setState('loading');
+  }
+
+  /** The upload finished; the texture can be drawn. */
+  markLoaded(dimensions: Dimensions): void {
+    this.setState('loaded', dimensions);
+  }
+
+  /** Fetching or uploading failed. */
+  markFailed(error: TextureError | Error): void {
+    this.setState('failed', error);
   }
 
   /**
-   * Release the texture data and core context texture for this Texture without changing state.
+   * Drop the context texture and source data; a texture that reached the
+   * renderer is marked `freed`.
+   */
+  free(): void {
+    // Gated on ctxTexture, not state: a texture freed mid-upload (e.g. a
+    // canvas text texture released on a text change) can have an allocated
+    // ctxTexture while still reporting 'loading'.
+    if (this.ctxTexture === undefined) {
+      this.txManager.untrackContextTexture(this);
+      this.freeTextureData();
+      return;
+    }
+    this.release();
+    this.setState('freed');
+  }
+
+  /**
+   * Drop the context texture and source data, keeping the current state.
    *
    * @remarks
-   * The ctxTexture is created by the renderer and lives on the GPU.
+   * Used after a failed load, so the texture stays `failed`. Callers outside
+   * the class use {@link free}, which also moves the state to `freed`.
    */
-  release(): void {
+  protected release(): void {
     this.ctxTexture?.release();
     this.ctxTexture = undefined;
     this.txManager.untrackContextTexture(this);
@@ -425,41 +457,19 @@ export abstract class Texture extends EventEmitter {
   // The browser has already discarded this generation's GPU resources.
   invalidateContext(): void {
     this.loadGeneration++;
-    if (
-      this.ctxTexture !== undefined &&
-      'invalidateContext' in this.ctxTexture
-    ) {
-      (
-        this.ctxTexture as CoreContextTexture & { invalidateContext(): void }
-      ).invalidateContext();
-    }
+    this.ctxTexture?.invalidateContext();
     this.ctxTexture = undefined;
-    if (this.state !== 'failed') this.state = 'freed';
+    if (this._state !== 'failed') this._state = 'freed';
     // A decoded image may have been closed after its first upload.
     this.textureData = null;
     this.memUsed = 0;
   }
 
   /**
-   * Destroy the texture.
-   *
-   * @remarks
-   * This method is called when the texture is no longer needed and should be
-   * cleaned up.
+   * Destroy the texture; same as {@link free}.
    */
   destroy(): void {
-    // Free GPU resources whenever they exist, not just in the 'loaded' state.
-    // A texture destroyed mid-upload (e.g. a canvas text texture released on a
-    // text change) can have an allocated ctxTexture while still reporting
-    // 'loading', and gating on state alone would strand it.
-    if (this.ctxTexture !== undefined) {
-      this.free();
-    }
-
-    this.txManager.untrackContextTexture(this);
-
-    // Always free texture data regardless of state
-    this.freeTextureData();
+    this.free();
   }
 
   /**
@@ -476,11 +486,11 @@ export abstract class Texture extends EventEmitter {
     });
   }
 
-  public setState(
+  protected setState(
     state: TextureState,
-    errorOrDimensions?: TextureError | Dimensions,
+    errorOrDimensions?: TextureError | Error | Dimensions,
   ): void {
-    if (this.state === state) {
+    if (this._state === state) {
       return;
     }
 
@@ -516,7 +526,7 @@ export abstract class Texture extends EventEmitter {
     }
 
     // emit the new state
-    this.state = state;
+    this._state = state;
     this.emit(state, payload);
   }
 
