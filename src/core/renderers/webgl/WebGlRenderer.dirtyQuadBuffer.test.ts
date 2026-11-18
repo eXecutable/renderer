@@ -120,6 +120,11 @@ const makeRenderer = (
   (renderer as any).rttNodes = [];
   (renderer as any).activeRttNode = null;
   (renderer as any).renderToTextureActive = false;
+  (renderer as any).renderTarget = {
+    w: 0,
+    h: 0,
+    pixelRatio: 1,
+  };
   (renderer as any).curBufferIdx = 0;
   (renderer as any).curRenderOp = null;
   (renderer as any).dirtyQuadCount = 0;
@@ -513,6 +518,7 @@ describe('WebGlRenderer dirty quad buffer — RTT isolation', () => {
       state: 'loaded',
       ctxTexture: { framebuffer: {}, w: 100, h: 100 },
     };
+    rttNode.framebufferDimensions = { w: 100, h: 100 };
     rttNode.hasRTTupdates = true;
     rttNode.worldAlpha = 1;
     rttNode.renderState = CoreNodeRenderState.InBounds;

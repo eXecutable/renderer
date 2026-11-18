@@ -22,7 +22,6 @@ import type { WebGlCtxTexture } from '../renderers/webgl/WebGlCtxTexture.js';
 import type { Stage } from '../Stage.js';
 import type { CoreRenderer } from '../renderers/CoreRenderer.js';
 import type { RectWithValid } from '../lib/utils.js';
-import type { Dimensions } from '../../common/CommonTypes.js';
 
 // Text baseline and vertical align types
 export type TextBaseline =
@@ -456,8 +455,6 @@ export interface TextRenderProps {
   clippingRect: RectWithValid;
   width: number;
   height: number;
-  parentHasRenderTexture: boolean;
-  framebufferDimensions: Dimensions | null;
   stage: Stage;
   /** Optional SDF vertex cache — passed by CoreTextNode for the cache-hit fast path. */
   sdfCache?: SdfVertexCache;

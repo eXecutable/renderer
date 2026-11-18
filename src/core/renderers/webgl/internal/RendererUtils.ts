@@ -18,6 +18,27 @@
  */
 
 import type { GlContextWrapper } from '../../../platforms/GlContextWrapper.js';
+import type { RenderTarget } from '../WebGlRenderer.js';
+
+/**
+ * Sets the GL scissor box for a logical-pixel rect in `target`.
+ * GL's origin is bottom-left, so y is flipped against the target height.
+ */
+export function scissorRect(
+  glw: GlContextWrapper,
+  target: RenderTarget,
+  rect: { x: number; y: number; w: number; h: number },
+): void {
+  const pixelRatio = target.pixelRatio;
+  const w = Math.round(rect.w * pixelRatio);
+  const h = Math.round(rect.h * pixelRatio);
+  glw.scissor(
+    Math.round(rect.x * pixelRatio),
+    Math.round(target.h - h - rect.y * pixelRatio),
+    w,
+    h,
+  );
+}
 
 export interface CoreWebGlParameters {
   MAX_RENDERBUFFER_SIZE: number;

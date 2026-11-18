@@ -466,8 +466,6 @@ export class CoreTextNode extends CoreNode implements CoreTextNodeProps {
       clippingRect: this.clippingRect,
       width: layout.width,
       height: layout.height,
-      parentHasRenderTexture: this.parentHasRenderTexture,
-      framebufferDimensions: this.parentFramebufferDimensions,
       stage: this.stage,
       sdfCache: this._sdfCache ?? undefined,
     });

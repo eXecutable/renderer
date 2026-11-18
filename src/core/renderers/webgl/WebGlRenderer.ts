@@ -27,6 +27,7 @@ import {
   getWebGlParameters,
   getWebGlExtensions,
   type WebGlColor,
+  scissorRect,
 } from './internal/RendererUtils.js';
 import { WebGlCtxTexture } from './WebGlCtxTexture.js';
 import {
@@ -115,6 +116,9 @@ const _mergeSdfSpanColor = (nodeColor: number, spanColor: number): number => {
  * `kind === 0` = begin stencil write pass (before children)
  * `kind === 1` = end stencil region (after children)
  *
+ * The rect is in logical pixels; device pixels are resolved against the
+ * renderer's current render target when the op is drawn.
+ *
  * Objects are reused from a pool on WebGlRenderer — never heap-allocated per frame.
  */
 export class StencilClipRenderOp {
@@ -124,16 +128,25 @@ export class StencilClipRenderOp {
   w: number = 0;
   h: number = 0;
   clipRadius: number = 0;
-  pixelRatio: number = 1;
-  canvasHeight: number = 0;
-  parentHasRenderTexture: boolean = false;
-  parentFramebufferH: number = 0;
   stencilRef: number = 0;
 }
 
 export type WebGlNodeRenderOp = CoreNode | CoreTextNode;
 export type WebGlRenderOp =
   WebGlNodeRenderOp | StencilClipRenderOp | SdfRenderOp;
+
+/**
+ * The framebuffer currently being drawn into: the canvas, or an RTT texture
+ * during {@link WebGlRenderer.renderRTTNodes}.
+ *
+ * `w` / `h` are the framebuffer's size in device pixels; `pixelRatio` maps
+ * logical coordinates onto it.
+ */
+export interface RenderTarget {
+  w: number;
+  h: number;
+  pixelRatio: number;
+}
 
 export class WebGlRenderer extends CoreRenderer {
   //// WebGL Native Context and Data
@@ -303,6 +316,11 @@ export class WebGlRenderer extends CoreRenderer {
    * Whether the renderer is currently rendering to a texture.
    */
   public renderToTextureActive = false;
+  /**
+   * Framebuffer that render ops currently draw into. Every draw path reads
+   * resolution, pixel ratio and the scissor y-flip from here.
+   */
+  readonly renderTarget: RenderTarget = { w: 0, h: 0, pixelRatio: 1 };
 
   constructor(stage: Stage) {
     super(stage);
@@ -478,11 +496,42 @@ export class WebGlRenderer extends CoreRenderer {
     this._sdfBufferRich?.clear();
     this.stencilOpPoolIdx = 0;
     this.stencilDepth = 0;
+    // Assumes the canvas is bound: Stage calls renderRTTNodes() after reset(),
+    // and that pass switches targets itself and rebinds the canvas when done.
+    const { width, height } = glw.canvas;
+    this.updateRenderTarget(width, height, this.stage.pixelRatio);
     glw.setScissorTest(false);
     glw.setStencilTest(false);
     if (this.stage.options.enableClear !== false) {
       glw.clear();
     }
+  }
+
+  /**
+   * Binds `framebuffer` (`null` = canvas), sets the viewport to its size and
+   * makes it the current {@link renderTarget}.
+   *
+   * Ends the current quad and SDF batches: an op from the previous target has
+   * already been drawn and must not be extended.
+   */
+  private setRenderTarget(
+    framebuffer: WebGLFramebuffer | null,
+    w: number,
+    h: number,
+    pixelRatio: number,
+  ) {
+    this.curRenderOp = null;
+    this.curSdfRenderOp = null;
+    this.glw.bindFramebuffer(framebuffer);
+    this.glw.viewport(0, 0, w, h);
+    this.updateRenderTarget(w, h, pixelRatio);
+  }
+
+  private updateRenderTarget(w: number, h: number, pixelRatio: number) {
+    const target = this.renderTarget;
+    target.w = w;
+    target.h = h;
+    target.pixelRatio = pixelRatio;
   }
 
   createShaderProgram(
@@ -717,29 +766,10 @@ export class WebGlRenderer extends CoreRenderer {
       return false;
     }
 
-    // Force new render operation if rendering to texture is different
-    const curRtt = curRenderOp.rtt;
-    if (
-      curRenderOp.parentHasRenderTexture !== node.parentHasRenderTexture ||
-      curRtt !== (node.props.rtt === true)
-    ) {
+    // RTT quads are not batched with regular quads. Ops for different render
+    // targets never meet here: setRenderTarget() ends the current batch.
+    if (curRenderOp.rtt !== (node.props.rtt === true)) {
       return false;
-    }
-
-    if (
-      node.parentHasRenderTexture === true &&
-      node.parentFramebufferDimensions !== null
-    ) {
-      const curFbDims = curRenderOp.isCoreNode
-        ? curRenderOp.parentFramebufferDimensions
-        : curRenderOp.framebufferDimensions;
-      if (
-        curFbDims === null ||
-        curFbDims.w !== node.parentFramebufferDimensions.w ||
-        curFbDims.h !== node.parentFramebufferDimensions.h
-      ) {
-        return false;
-      }
     }
 
     if (curShader?.shaderKey === 'default' && shader?.shaderKey === 'default') {
@@ -796,8 +826,6 @@ export class WebGlRenderer extends CoreRenderer {
     clippingRect: RectWithValid,
     width: number,
     height: number,
-    parentHasRenderTexture: boolean,
-    framebufferDimensions: Dimensions | null,
     sdfShader: WebGlShaderNode,
   ): void {
     if (glyphCount === 0) {
@@ -985,8 +1013,6 @@ export class WebGlRenderer extends CoreRenderer {
       worldAlpha,
       width,
       height,
-      parentHasRenderTexture,
-      framebufferDimensions,
       sdfShader,
     );
   }
@@ -1018,8 +1044,6 @@ export class WebGlRenderer extends CoreRenderer {
     worldAlpha: number,
     width: number,
     height: number,
-    parentHasRenderTexture: boolean,
-    framebufferDimensions: Dimensions | null,
     sdfShader: WebGlShaderNode,
   ): void {
     if (numGlyphs === 0) {
@@ -1044,8 +1068,6 @@ export class WebGlRenderer extends CoreRenderer {
       worldAlpha,
       width,
       height,
-      parentHasRenderTexture,
-      framebufferDimensions,
       sdfShader,
     );
   }
@@ -1075,8 +1097,6 @@ export class WebGlRenderer extends CoreRenderer {
     worldAlpha: number,
     width: number,
     height: number,
-    parentHasRenderTexture: boolean,
-    framebufferDimensions: Dimensions | null,
     sdfShader: WebGlShaderNode,
   ): void {
     if (numGlyphs === 0) {
@@ -1115,8 +1135,6 @@ export class WebGlRenderer extends CoreRenderer {
       worldAlpha,
       width,
       height,
-      parentHasRenderTexture,
-      framebufferDimensions,
       sdfShader,
     );
   }
@@ -1134,8 +1152,6 @@ export class WebGlRenderer extends CoreRenderer {
     worldAlpha: number,
     width: number,
     height: number,
-    parentHasRenderTexture: boolean,
-    framebufferDimensions: Dimensions | null,
     sdfShader: WebGlShaderNode,
   ): void {
     // --- Batching: try to extend the current SDF render op ---------------
@@ -1152,13 +1168,7 @@ export class WebGlRenderer extends CoreRenderer {
         ) {
           // Same clipping rect?
           if (compareRect(cur.clippingRect, clippingRect)) {
-            // Same RTT state?
-            if (
-              cur.parentHasRenderTexture === parentHasRenderTexture &&
-              cur.rtt === false
-            ) {
-              canBatch = true;
-            }
+            canBatch = cur.rtt === false;
           }
         }
       }
@@ -1187,8 +1197,6 @@ export class WebGlRenderer extends CoreRenderer {
         width,
         height,
         false,
-        parentHasRenderTexture,
-        framebufferDimensions,
       );
       op.startQuad = startQuad;
       op.numQuads = glyphCount;
@@ -1487,10 +1495,12 @@ export class WebGlRenderer extends CoreRenderer {
       const ctxTexture = node.texture.ctxTexture as WebGlCtxRenderTexture;
       this.renderToTextureActive = true;
 
-      // Bind the the texture's framebuffer
-      glw.bindFramebuffer(ctxTexture.framebuffer);
-
-      glw.viewport(0, 0, ctxTexture.w, ctxTexture.h);
+      this.setRenderTarget(
+        ctxTexture.framebuffer,
+        ctxTexture.w,
+        ctxTexture.h,
+        1,
+      );
       // Set the clear color to transparent
       glw.clearColor(0, 0, 0, 0);
       // gl.clear honours the scissor left over from the previous draw
@@ -1549,10 +1559,12 @@ export class WebGlRenderer extends CoreRenderer {
     // Restore the default clear color
     glw.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
 
-    // Bind the default framebuffer
-    glw.bindFramebuffer(null);
-
-    glw.viewport(0, 0, this.glw.canvas.width, this.glw.canvas.height);
+    this.setRenderTarget(
+      null,
+      glw.canvas.width,
+      glw.canvas.height,
+      this.stage.pixelRatio,
+    );
     this.renderToTextureActive = false;
   }
 
@@ -1768,27 +1780,22 @@ export class WebGlRenderer extends CoreRenderer {
   /**
    * Inserts a "begin rounded clip" sentinel into renderOps for the given node.
    * Called by Stage.addQuads before processing a rounded-clip node's children.
+   *
+   * Only clips on the canvas: RTT framebuffers have no stencil attachment
+   * (see WebGlCtxRenderTexture), so inside an RTT the stencil test always
+   * passes and children are clipped to the rectangular scissor only.
    */
   override beginRoundedClip(node: CoreNode) {
     const cr = node.clippingRect;
-    const pixelRatio = node.parentHasRenderTexture ? 1 : this.stage.pixelRatio;
-    const canvas = this.stage.platform!.canvas!;
 
     this.stencilDepth++;
     const op = this.allocStencilOp();
     op.kind = 0;
-    op.x = Math.round(cr.x * pixelRatio);
-    op.w = Math.round(cr.w * pixelRatio);
-    op.h = Math.round(cr.h * pixelRatio);
-    op.y = Math.round(canvas.height - op.h - cr.y * pixelRatio);
-    op.clipRadius = cr.clipRadius * pixelRatio;
-    op.pixelRatio = pixelRatio;
-    op.canvasHeight = canvas.height;
-    op.parentHasRenderTexture = node.parentHasRenderTexture;
-    op.parentFramebufferH =
-      node.parentHasRenderTexture && node.parentFramebufferDimensions !== null
-        ? node.parentFramebufferDimensions.h
-        : 0;
+    op.x = cr.x;
+    op.y = cr.y;
+    op.w = cr.w;
+    op.h = cr.h;
+    op.clipRadius = cr.clipRadius;
     op.stencilRef = this.stencilDepth;
 
     // Break current render-op batch so the stencil sentinel lands at the right position
@@ -1824,20 +1831,15 @@ export class WebGlRenderer extends CoreRenderer {
     // a proper attach() at cost of exactly one gl.useProgram (the same as before).
     program.bindForStencil(this.stencilQuadBufferCollection!);
 
-    // Set uniforms
-    if (op.parentHasRenderTexture === true && op.parentFramebufferH !== 0) {
-      glw.uniform1f('u_pixelRatio', 1.0);
-      glw.uniform2f('u_resolution', op.w, op.parentFramebufferH);
-    } else {
-      glw.uniform1f('u_pixelRatio', op.pixelRatio);
-      glw.uniform2f('u_resolution', glw.canvas.width, glw.canvas.height);
-    }
-    glw.uniform2f('u_dimensions', op.w / op.pixelRatio, op.h / op.pixelRatio);
-    glw.uniform1f('u_radius', op.clipRadius / op.pixelRatio);
+    const target = this.renderTarget;
+    glw.uniform1f('u_pixelRatio', target.pixelRatio);
+    glw.uniform2f('u_resolution', target.w, target.h);
+    glw.uniform2f('u_dimensions', op.w, op.h);
+    glw.uniform1f('u_radius', op.clipRadius);
 
     // Scissor: coarse bounds for the stencil write region
     glw.setScissorTest(true);
-    glw.scissor(op.x, op.y, op.w, op.h);
+    scissorRect(glw, target, op);
 
     // Stencil write pass: draw rounded rect shape, write stencilRef to stencil buffer
     glw.setStencilTest(true);
@@ -1851,13 +1853,10 @@ export class WebGlRenderer extends CoreRenderer {
     // stencil VBO.  The main quad buffer is never touched.
     const f = this._stencilScratchF;
     const u = this._stencilScratchU;
-    const x1 = op.x / op.pixelRatio;
-    const y1 =
-      op.canvasHeight / op.pixelRatio -
-      op.y / op.pixelRatio -
-      op.h / op.pixelRatio;
-    const x2 = x1 + op.w / op.pixelRatio;
-    const y2 = y1 + op.h / op.pixelRatio;
+    const x1 = op.x;
+    const y1 = op.y;
+    const x2 = x1 + op.w;
+    const y2 = y1 + op.h;
     const white = 0xffffffff;
     // Upper-Left
     f[0] = x1;

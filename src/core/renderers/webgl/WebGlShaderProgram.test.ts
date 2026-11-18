@@ -61,8 +61,6 @@ const makeSdfTextNode = () => {
     makeSdfTextRenderer(),
   );
   node.parentHasRenderTexture = true;
-  node.framebufferDimensions = { w: 320, h: 180 };
-  node.rttParent = { framebufferDimensions: { w: 640, h: 360 } } as any;
   return node;
 };
 
@@ -75,21 +73,26 @@ describe('WebGlShaderProgram.bindRenderOp', () => {
     const bindBufferCollection = vi.fn();
     const uniform1f = vi.fn();
     const uniform2f = vi.fn();
-    const glw = {
-      canvas: { width: 1920, height: 1080 },
-      uniform1f,
-      uniform2f,
+    const renderTarget = {
+      w: 1920,
+      h: 1080,
+      pixelRatio: 1.5,
     };
 
     (program as any).bindTextures = bindTextures;
     (program as any).bindBufferCollection = bindBufferCollection;
-    (program as any).glw = glw;
+    (program as any).glw = { uniform1f, uniform2f };
+    (program as any).renderer = { renderTarget };
+    (program as any).lastPixelRatio = -1;
+    (program as any).lastResolutionW = -1;
+    (program as any).lastResolutionH = -1;
     (program as any).useTimeValue = false;
     (program as any).useSystemAlpha = false;
     (program as any).useSystemDimensions = false;
 
     return {
       program,
+      renderTarget,
       bindTextures,
       bindBufferCollection,
       uniform1f,
@@ -97,7 +100,17 @@ describe('WebGlShaderProgram.bindRenderOp', () => {
     };
   }
 
-  it('binds an SdfRenderOp using the main framebuffer resolution', () => {
+  const makeRenderOp = () => ({
+    shader: { uniforms: { hasStoredUniforms: false } },
+    renderOpTextures: [],
+    quadBufferCollection: {},
+    time: 0,
+    worldAlpha: 1,
+    w: 100,
+    h: 20,
+  });
+
+  it('binds textures, buffers and the render target uniforms', () => {
     const {
       program,
       bindTextures,
@@ -105,20 +118,7 @@ describe('WebGlShaderProgram.bindRenderOp', () => {
       uniform1f,
       uniform2f,
     } = createProgram();
-    const renderOp = {
-      isCoreNode: false,
-      shader: { uniforms: { hasStoredUniforms: false } },
-      renderOpTextures: [],
-      quadBufferCollection: {},
-      parentHasRenderTexture: false,
-      framebufferDimensions: null,
-      rtt: false,
-      stage: { pixelRatio: 1.5 },
-      time: 0,
-      worldAlpha: 1,
-      w: 100,
-      h: 20,
-    };
+    const renderOp = makeRenderOp();
 
     program.bindRenderOp(renderOp as any);
 
@@ -130,79 +130,27 @@ describe('WebGlShaderProgram.bindRenderOp', () => {
     expect(uniform2f).toHaveBeenCalledWith('u_resolution', 1920, 1080);
   });
 
-  it('uses the parent framebuffer resolution for an SdfRenderOp in RTT', () => {
-    const { program, uniform1f, uniform2f } = createProgram();
-    const renderOp = {
-      isCoreNode: false,
-      shader: { uniforms: { hasStoredUniforms: false } },
-      renderOpTextures: [],
-      quadBufferCollection: {},
-      parentHasRenderTexture: true,
-      framebufferDimensions: { w: 320, h: 180 },
-      rtt: false,
-      stage: { pixelRatio: 2 },
-      time: 0,
-      worldAlpha: 1,
-      w: 100,
-      h: 20,
-    };
+  it('follows the render target when it switches to an RTT framebuffer', () => {
+    const { program, renderTarget, uniform1f, uniform2f } = createProgram();
 
-    program.bindRenderOp(renderOp as any);
+    program.bindRenderOp(makeRenderOp() as any);
+    renderTarget.w = 640;
+    renderTarget.h = 360;
+    renderTarget.pixelRatio = 2;
+    program.bindRenderOp(makeRenderOp() as any);
 
-    expect(uniform1f).toHaveBeenCalledWith('u_pixelRatio', 1);
-    expect(uniform2f).toHaveBeenCalledWith('u_resolution', 320, 180);
+    expect(uniform1f).toHaveBeenLastCalledWith('u_pixelRatio', 2);
+    expect(uniform2f).toHaveBeenLastCalledWith('u_resolution', 640, 360);
   });
 
-  it('uses parent RTT dimensions for core-node render ops', () => {
+  it('skips re-uploading unchanged target uniforms', () => {
     const { program, uniform1f, uniform2f } = createProgram();
-    const renderOp = {
-      framebufferDimensions: { w: 320, h: 180 },
-      isCoreNode: true,
-      parentFramebufferDimensions: { w: 640, h: 360 },
-      parentHasRenderTexture: true,
-      quadBufferCollection: {},
-      renderOpTextures: [],
-      rtt: false,
-      shader: {
-        uniforms: { hasStoredUniforms: false },
-      },
-      stage: { pixelRatio: 2 },
-      time: 0,
-      worldAlpha: 1,
-      w: 100,
-      h: 20,
-    } as any;
 
-    program.bindRenderOp(renderOp);
+    program.bindRenderOp(makeRenderOp() as any);
+    program.bindRenderOp(makeRenderOp() as any);
 
-    expect(uniform1f).toHaveBeenCalledWith('u_pixelRatio', 1.0);
-    expect(uniform2f).toHaveBeenCalledWith('u_resolution', 640, 360);
-  });
-
-  it('binds a nested RTT node with its parent RTT dimensions', () => {
-    const { program, uniform1f, uniform2f } = createProgram();
-    const renderOp = {
-      framebufferDimensions: { w: 320, h: 180 },
-      isCoreNode: true,
-      parentFramebufferDimensions: { w: 640, h: 360 },
-      parentHasRenderTexture: true,
-      quadBufferCollection: {},
-      renderOpTextures: [],
-      rtt: true,
-      shader: {
-        uniforms: { hasStoredUniforms: false },
-      },
-      stage: { pixelRatio: 2 },
-      time: 0,
-      worldAlpha: 1,
-      w: 320,
-      h: 180,
-    } as any;
-
-    program.bindRenderOp(renderOp);
-
-    expect(uniform1f).toHaveBeenCalledWith('u_pixelRatio', 1.0);
-    expect(uniform2f).toHaveBeenCalledWith('u_resolution', 640, 360);
+    expect(uniform1f).toHaveBeenCalledTimes(1);
+    expect(uniform2f).toHaveBeenCalledTimes(1);
   });
 });
 

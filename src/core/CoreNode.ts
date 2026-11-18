@@ -24,6 +24,7 @@ import {
 } from '../utils.js';
 import type { TextureOptions } from './CoreTextureManager.js';
 import type { WebGlRenderer } from './renderers/webgl/WebGlRenderer.js';
+import { scissorRect } from './renderers/webgl/internal/RendererUtils.js';
 import type { WebGlCtxTexture } from './renderers/webgl/WebGlCtxTexture.js';
 import {
   QUAD_VERTEX_STRIDE,
@@ -777,7 +778,6 @@ export class CoreNode extends EventEmitter {
   readonly children: CoreNode[] = [];
   protected _id: number = getNewId();
   readonly props: CoreNodeProps;
-  public readonly isCoreNode: boolean = true as const;
 
   // WebGL Render Op State
   public renderOpBufferIdx: number = 0;
@@ -852,7 +852,6 @@ export class CoreNode extends EventEmitter {
   public calcZIndex = 0;
   public hasRTTupdates = false;
   public parentHasRenderTexture = false;
-  public rttParent: CoreNode | null = null;
   /**
    * only used when rtt = true
    */
@@ -1639,7 +1638,7 @@ export class CoreNode extends EventEmitter {
       return;
     }
 
-    const rttNode = this.rttParent || this.findParentRTTNode();
+    const rttNode = this.findParentRTTNode();
     if (!rttNode) {
       return;
     }
@@ -2309,10 +2308,7 @@ export class CoreNode extends EventEmitter {
 
       if (props.rtt === true) {
         this.framebufferDimensions!.w = value;
-        this.texture = this.stage.txManager.createTexture(
-          'RenderTexture',
-          this.framebufferDimensions!,
-        );
+        this.createRenderTexture();
         updateType |= UpdateType.RenderTexture;
       }
       this.setUpdateType(updateType);
@@ -2338,10 +2334,7 @@ export class CoreNode extends EventEmitter {
 
       if (props.rtt === true) {
         this.framebufferDimensions!.h = value;
-        this.texture = this.stage.txManager.createTexture(
-          'RenderTexture',
-          this.framebufferDimensions!,
-        );
+        this.createRenderTexture();
         updateType |= UpdateType.RenderTexture;
       }
       this.setUpdateType(updateType);
@@ -2772,11 +2765,15 @@ export class CoreNode extends EventEmitter {
       w: this.props.w,
       h: this.props.h,
     };
+    this.createRenderTexture();
+    this.stage.renderer.renderToTexture(this);
+  }
+
+  private createRenderTexture() {
     this.texture = this.stage.txManager.createTexture(
       'RenderTexture',
-      this.framebufferDimensions,
+      this.framebufferDimensions!,
     );
-    this.stage.renderer.renderToTexture(this);
   }
 
   private cleanupRenderTexture() {
@@ -2809,7 +2806,6 @@ export class CoreNode extends EventEmitter {
     for (const child of this.children) {
       // force child to update everything as the RTT inheritance has changed
       child.parentHasRenderTexture = false;
-      child.rttParent = null;
       child.setUpdateType(UpdateType.All);
       child.clearRTTInheritance();
     }
@@ -2923,17 +2919,6 @@ export class CoreNode extends EventEmitter {
 
   set srcY(value: number) {
     this.props.srcY = value;
-  }
-
-  /**
-   * Returns the framebuffer dimensions of the RTT parent
-   */
-  get parentFramebufferDimensions(): Dimensions | null {
-    if (this.rttParent !== null) {
-      return this.rttParent.framebufferDimensions;
-    }
-    this.rttParent = this.findParentRTTNode();
-    return this.rttParent ? this.rttParent.framebufferDimensions : null;
   }
 
   /**
@@ -3054,7 +3039,6 @@ export class CoreNode extends EventEmitter {
 
   draw(renderer: WebGlRenderer) {
     const { glw, stage } = renderer;
-    const canvas = stage.platform!.canvas!;
     const shader = this.props.shader as any;
 
     stage.shManager.useShader(shader.program);
@@ -3062,30 +3046,8 @@ export class CoreNode extends EventEmitter {
 
     // Clipping
     if (this.clippingRect.valid === true) {
-      const pixelRatio = this.parentHasRenderTexture ? 1 : stage.pixelRatio;
-
-      const clipX = Math.round(this.clippingRect.x * pixelRatio);
-      const clipWidth = Math.round(this.clippingRect.w * pixelRatio);
-      const clipHeight = Math.round(this.clippingRect.h * pixelRatio);
-      let clipY = Math.round(
-        canvas.height - clipHeight - this.clippingRect.y * pixelRatio,
-      );
-      // if parent has render texture, we need to adjust the scissor rect
-      // to be relative to the parent's framebuffer
-      if (this.parentHasRenderTexture) {
-        const parentFramebufferDimensions = this.parentFramebufferDimensions;
-        clipY =
-          parentFramebufferDimensions !== null
-            ? Math.round(
-                parentFramebufferDimensions.h -
-                  clipHeight -
-                  this.clippingRect.y,
-              )
-            : 0;
-      }
-
       glw.setScissorTest(true);
-      glw.scissor(clipX, clipY, clipWidth, clipHeight);
+      scissorRect(glw, renderer.renderTarget, this.clippingRect);
     } else {
       glw.setScissorTest(false);
     }

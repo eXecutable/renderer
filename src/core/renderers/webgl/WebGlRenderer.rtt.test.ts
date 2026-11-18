@@ -32,7 +32,7 @@ import {
   type CoreNodeProps,
 } from '../../CoreNode.js';
 import type { Stage } from '../../Stage.js';
-import { WebGlRenderer } from './WebGlRenderer.js';
+import { WebGlRenderer, type RenderTarget } from './WebGlRenderer.js';
 import { makeMockStage, makeNodeProps } from '../../../../test/mockStage.js';
 
 // ---------------------------------------------------------------------------
@@ -198,12 +198,9 @@ describe('RTT — hasRTTupdates dirty-flag lifecycle', () => {
     const child = new CoreNode(stage, makeDefaultProps());
     child.parent = rttParent;
 
-    // Manually wire rttParent flag used by notifyParentRTTOfUpdate path
-    // (normally set by markChildrenWithRTT when rtt is enabled on rttParent)
     // Simulate the state that exists after rtt=true is set on rttParent
     rttParent['props'].rtt = true;
     child.parentHasRenderTexture = true;
-    child.rttParent = rttParent;
 
     rttParent.hasRTTupdates = false;
 
@@ -458,7 +455,6 @@ describe('RTT — RTT_NOTIFY_MASK gate in update()', () => {
     const child = new CoreNode(stage, makeDefaultProps());
     child.parent = rttParent;
     child.parentHasRenderTexture = true;
-    child.rttParent = rttParent;
     child.hasRTTupdates = false;
 
     return { rttParent, child };
@@ -598,37 +594,44 @@ describe('RTT — nested sceneGlobalTransform', () => {
 // ---------------------------------------------------------------------------
 
 describe('RTT — scissor inside a framebuffer', () => {
-  it('derives the scissor from the clipping rect, not the drawn node height', () => {
+  const drawClipped = (
+    renderTarget: RenderTarget,
+    clippingRect: { x: number; y: number; w: number; h: number },
+  ) => {
     const stage = makeMockStage({
-      platform: { canvas: { height: 1080 } } as unknown as Stage['platform'],
       shManager: { useShader: vi.fn() } as unknown as Stage['shManager'],
     });
-    const rttNode = new CoreNode(stage, makeDefaultProps());
-    rttNode['props'].rtt = true;
-    rttNode.framebufferDimensions = { w: 400, h: 300 };
-
     const node = new CoreNode(stage, { ...makeDefaultProps(), h: 20 });
-    node.parent = rttNode;
     node['props'].shader = {
       program: { bindRenderOp: vi.fn() },
     } as unknown as CoreNodeProps['shader'];
-    node.clippingRect = {
-      x: 10,
-      y: 50,
-      w: 200,
-      h: 100,
-      valid: true,
-      clipRadius: 0,
-    };
+    node.clippingRect = { ...clippingRect, valid: true, clipRadius: 0 };
 
     const glw = {
       setScissorTest: vi.fn(),
       scissor: vi.fn(),
       drawElements: vi.fn(),
     };
-    node.draw({ glw, stage } as unknown as WebGlRenderer);
+    node.draw({ glw, stage, renderTarget } as unknown as WebGlRenderer);
+    return glw.scissor;
+  };
 
-    expect(glw.scissor).toHaveBeenCalledWith(10, 150, 200, 100);
+  it('flips the scissor y against the render target, not the node height', () => {
+    const scissor = drawClipped(
+      { w: 400, h: 300, pixelRatio: 1 },
+      { x: 10, y: 50, w: 200, h: 100 },
+    );
+
+    expect(scissor).toHaveBeenCalledWith(10, 150, 200, 100);
+  });
+
+  it('scales the scissor rect by the render target pixel ratio', () => {
+    const scissor = drawClipped(
+      { w: 200, h: 150, pixelRatio: 0.5 },
+      { x: 10, y: 50, w: 200, h: 100 },
+    );
+
+    expect(scissor).toHaveBeenCalledWith(5, 75, 100, 50);
   });
 
   it('disables the scissor before clearing an RTT framebuffer', () => {
@@ -641,6 +644,7 @@ describe('RTT — scissor inside a framebuffer', () => {
       state: 'loaded',
       ctxTexture: { framebuffer: {}, w: 100, h: 100 },
     } as unknown as CoreNodeProps['texture'];
+    node.framebufferDimensions = { w: 100, h: 100 };
 
     const calls: string[] = [];
     const glw = {
@@ -663,11 +667,79 @@ describe('RTT — scissor inside a framebuffer', () => {
       clearColor: { normalized: [0, 0, 0, 0] },
       _sdfBufferPlain: null,
       _sdfBufferRich: null,
-      render: vi.fn(),
+      render: vi.fn(() =>
+        calls.push(`target:${r.renderTarget.w}x${r.renderTarget.h}`),
+      ),
+      renderTarget: {
+        w: 1920,
+        h: 1080,
+        pixelRatio: 1,
+      },
+      stage,
     });
 
     r.renderRTTNodes();
 
-    expect(calls).toEqual(['scissor:false', 'clear']);
+    expect(calls).toEqual(['scissor:false', 'clear', 'target:100x100']);
+    expect(r.renderTarget).toEqual({
+      w: 1920,
+      h: 1080,
+      pixelRatio: stage.pixelRatio,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batching across render targets
+// ---------------------------------------------------------------------------
+
+describe('RTT — batching across render targets', () => {
+  it('does not extend a batch from a previous same-size RTT pass', () => {
+    const stage = makeStage();
+    const makeRttNode = () => {
+      const node = new CoreNode(stage, makeDefaultProps());
+      node.hasRTTupdates = true;
+      node.worldAlpha = 1;
+      node.renderState = CoreNodeRenderState.InViewport;
+      node['props'].texture = {
+        state: 'loaded',
+        ctxTexture: { framebuffer: {}, w: 100, h: 100 },
+      } as unknown as CoreNodeProps['texture'];
+      node.framebufferDimensions = { w: 100, h: 100 };
+      return node;
+    };
+    const first = makeRttNode();
+    const second = makeRttNode();
+    const staleOp = {} as CoreNode;
+    const batchAtPassStart: unknown[] = [];
+
+    const r = Object.create(WebGlRenderer.prototype) as WebGlRenderer;
+    Object.assign(r, {
+      glw: {
+        canvas: { width: 1920, height: 1080 },
+        bindFramebuffer: vi.fn(),
+        viewport: vi.fn(),
+        clearColor: vi.fn(),
+        setScissorTest: vi.fn(),
+        clear: vi.fn(),
+      },
+      rttNodes: [first, second],
+      renderOps: [],
+      useDirtyRepaints: false,
+      clearColor: { normalized: [0, 0, 0, 0] },
+      _sdfBufferPlain: null,
+      _sdfBufferRich: null,
+      renderTarget: { w: 0, h: 0, pixelRatio: 1 },
+      stage,
+      render: vi.fn(() => {
+        batchAtPassStart.push(r.curRenderOp);
+        r.curRenderOp = staleOp;
+      }),
+    });
+
+    r.renderRTTNodes();
+
+    expect(batchAtPassStart).toEqual([null, null]);
+    expect(r.curRenderOp).toBeNull();
   });
 });

@@ -93,8 +93,6 @@ const finalizeText = (
     1, // worldAlpha
     100,
     50,
-    false, // parentHasRenderTexture
-    null, // framebufferDimensions
     {}, // sdfShader
   );
 };

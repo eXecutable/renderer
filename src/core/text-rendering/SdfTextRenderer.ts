@@ -243,8 +243,6 @@ const renderQuads = (
           renderProps.worldAlpha,
           layout.width,
           layout.height,
-          renderProps.parentHasRenderTexture,
-          renderProps.framebufferDimensions,
           shader,
         );
         return;
@@ -268,8 +266,6 @@ const renderQuads = (
         renderProps.worldAlpha,
         layout.width,
         layout.height,
-        renderProps.parentHasRenderTexture,
-        renderProps.framebufferDimensions,
         shader,
       );
       return;
@@ -292,8 +288,6 @@ const renderQuads = (
     renderProps.clippingRect,
     layout.width,
     layout.height,
-    renderProps.parentHasRenderTexture,
-    renderProps.framebufferDimensions,
     shader,
   );
 

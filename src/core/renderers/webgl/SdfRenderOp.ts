@@ -23,15 +23,15 @@ import type { WebGlRenderer } from './WebGlRenderer.js';
 import type { SdfBuffer } from './SdfBuffer.js';
 import type { WebGlShaderNode } from './WebGlShaderNode.js';
 import type { RectWithValid } from '../../lib/utils.js';
-import type { Dimensions } from '../../../common/CommonTypes.js';
 import type { Stage } from '../../Stage.js';
+import { scissorRect } from './internal/RendererUtils.js';
 
 /**
  * A batched SDF text render operation.
  *
  * Rather than owning its own WebGL buffer, this op references a range inside
  * one of the renderer's shared SDF vertex buffers (a {@link SdfBuffer}). Text
- * nodes that share the same atlas texture, clipping rect, and RTT state are
+ * nodes that share the same atlas texture and clipping rect are
  * merged into a single SdfRenderOp, producing one draw call for many strings.
  *
  * `startQuad` is 0-based within the owning SdfBuffer. The shared element index
@@ -41,7 +41,6 @@ import type { Stage } from '../../Stage.js';
  */
 export class SdfRenderOp extends CoreRenderOp {
   public numQuads = 0;
-  public readonly isCoreNode = false as const;
   public renderOpTextures: WebGlCtxTexture[] = [];
   public time: number = 0;
   readonly stage: Stage;
@@ -61,8 +60,6 @@ export class SdfRenderOp extends CoreRenderOp {
     readonly w: number,
     readonly h: number,
     readonly rtt: boolean,
-    public parentHasRenderTexture: boolean,
-    public framebufferDimensions: Dimensions | null,
   ) {
     super();
     this.stage = renderer.stage;
@@ -92,30 +89,14 @@ export class SdfRenderOp extends CoreRenderOp {
 
   draw() {
     const { glw, stage } = this.renderer;
-    const canvas = stage.platform!.canvas!;
 
     stage.shManager.useShader(this.shader.program);
     this.shader.program.bindRenderOp(this);
 
     // Clipping
     if (this.clippingRect.valid === true) {
-      const pixelRatio = this.parentHasRenderTexture ? 1 : stage.pixelRatio;
-      const clipX = Math.round(this.clippingRect.x * pixelRatio);
-      const clipWidth = Math.round(this.clippingRect.w * pixelRatio);
-      const clipHeight = Math.round(this.clippingRect.h * pixelRatio);
-      let clipY = Math.round(
-        canvas.height - clipHeight - this.clippingRect.y * pixelRatio,
-      );
-      // if parent has render texture, we need to adjust the scissor rect
-      // to be relative to the parent's framebuffer
-      if (this.parentHasRenderTexture) {
-        clipY = this.framebufferDimensions
-          ? this.framebufferDimensions.h - this.h
-          : 0;
-      }
-
       glw.setScissorTest(true);
-      glw.scissor(clipX, clipY, clipWidth, clipHeight);
+      scissorRect(glw, this.renderer.renderTarget, this.clippingRect);
     } else {
       glw.setScissorTest(false);
     }

@@ -33,28 +33,19 @@ import {
   type UniformSet4Params,
 } from './internal/ShaderUtils.js';
 import { CoreNode } from '../../CoreNode.js';
-import type { Dimensions } from '../../../common/CommonTypes.js';
-import type { Stage } from '../../Stage.js';
 
 /**
  * Structural surface shared by node render ops (CoreNode / CoreTextNode) and
  * batched SdfRenderOps that {@link WebGlShaderProgram.bindRenderOp} consumes.
  *
- * Node ops expose `parentFramebufferDimensions`, SdfRenderOp exposes
- * `framebufferDimensions`; `isCoreNode` picks the active one. Keeping this as
- * an interface (rather than widening to the full `WebGlRenderOp` union)
- * avoids demanding properties from StencilClipRenderOp, which is never bound
- * through this path.
+ * Resolution and pixel ratio come from the renderer's current render target,
+ * not the op. Keeping this as an interface (rather than widening to the full
+ * `WebGlRenderOp` union) avoids demanding properties from
+ * StencilClipRenderOp, which is never bound through this path.
  */
 export interface WebGlBoundRenderOp {
   renderOpTextures: WebGlCtxTexture[];
   quadBufferCollection: BufferCollection;
-  isCoreNode: boolean;
-  rtt: boolean;
-  parentHasRenderTexture: boolean;
-  parentFramebufferDimensions?: Dimensions | null;
-  framebufferDimensions?: Dimensions | null;
-  stage: Stage;
   time: number;
   worldAlpha: number;
   w: number;
@@ -314,25 +305,12 @@ export class WebGlShaderProgram implements CoreShaderProgram {
     this.bindTextures(renderOp.renderOpTextures);
     this.bindBufferCollection(renderOp.quadBufferCollection);
 
-    const parentHasRenderTexture = renderOp.parentHasRenderTexture;
-    const framebufferDimensions = renderOp.isCoreNode
-      ? renderOp.parentFramebufferDimensions
-      : renderOp.framebufferDimensions;
-
-    // Resolve target pixel ratio / resolution, then compare-and-set against
-    // the program's shadow state to skip value-identical re-uploads.
-    let pixelRatio: number;
-    let resolutionW: number;
-    let resolutionH: number;
-    if (parentHasRenderTexture === true && framebufferDimensions) {
-      pixelRatio = 1.0;
-      resolutionW = framebufferDimensions.w;
-      resolutionH = framebufferDimensions.h;
-    } else {
-      pixelRatio = renderOp.stage.pixelRatio;
-      resolutionW = this.glw.canvas.width;
-      resolutionH = this.glw.canvas.height;
-    }
+    // Compare-and-set against the program's shadow state to skip
+    // value-identical re-uploads.
+    const target = this.renderer.renderTarget;
+    const pixelRatio = target.pixelRatio;
+    const resolutionW = target.w;
+    const resolutionH = target.h;
 
     if (pixelRatio !== this.lastPixelRatio) {
       this.glw.uniform1f('u_pixelRatio', pixelRatio);

@@ -144,8 +144,6 @@ const addSdfQuads = (
     NO_CLIP,
     100,
     50,
-    false,
-    null,
     {},
   );
 };
@@ -174,8 +172,6 @@ const addSdfTranslatedQuads = (
     1,
     100,
     50,
-    false,
-    null,
     {},
   );
 };
@@ -433,20 +429,7 @@ describe('WebGlRenderer.addSdfCachedQuads', () => {
       WebGlRenderer.prototype as unknown as {
         addSdfCachedQuads: (this: unknown, ...args: unknown[]) => void;
       }
-    ).addSdfCachedQuads.call(
-      fake,
-      b,
-      f,
-      1,
-      atlasA,
-      NO_CLIP,
-      1,
-      100,
-      50,
-      false,
-      null,
-      {},
-    );
+    ).addSdfCachedQuads.call(fake, b, f, 1, atlasA, NO_CLIP, 1, 100, 50, {});
 
     expect(b.idx).toBe(FLOATS_PER_GLYPH_PLAIN);
     expect(b.quadCount).toBe(1);
@@ -474,8 +457,6 @@ describe('WebGlRenderer.addSdfCachedQuads', () => {
       1,
       100,
       50,
-      false,
-      null,
       {},
     );
 
@@ -547,8 +528,6 @@ const finalize = (
     1,
     100,
     50,
-    false,
-    null,
     {},
   );
 };
@@ -750,8 +729,6 @@ const makeRenderProps = (
     clippingRect: NO_CLIP,
     width: 100,
     height: 50,
-    parentHasRenderTexture: false,
-    framebufferDimensions: null,
     sdfCache: cache,
   }) as unknown as TextRenderProps;
 

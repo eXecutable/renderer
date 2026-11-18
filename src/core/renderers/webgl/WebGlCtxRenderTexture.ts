@@ -67,7 +67,8 @@ export class WebGlCtxRenderTexture extends WebGlCtxTexture {
     // Bind the framebuffer
     glw.bindFramebuffer(this.framebuffer);
 
-    // Attach the texture to the framebuffer
+    // Attach the texture to the framebuffer. Colour only: there is no stencil
+    // attachment, so rounded-corner stencil clips don't clip inside an RTT.
     glw.framebufferTexture2D(glw.COLOR_ATTACHMENT0, nativeTexture, 0);
 
     // Unbind the framebuffer
