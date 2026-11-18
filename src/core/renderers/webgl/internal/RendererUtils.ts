@@ -22,19 +22,22 @@ import type { RenderTarget } from '../WebGlRenderer.js';
 
 /**
  * Sets the GL scissor box for a logical-pixel rect in `target`.
- * GL's origin is bottom-left, so y is flipped against the target height.
+ * GL's origin is bottom-left, so y is flipped against the viewport height.
+ * Scales by viewport / extent so the box lands where the geometry does
+ * when an RTT's unrounded extent is squeezed onto its rounded texture.
  */
 export function scissorRect(
   glw: GlContextWrapper,
   target: RenderTarget,
   rect: { x: number; y: number; w: number; h: number },
 ): void {
-  const pixelRatio = target.pixelRatio;
-  const w = Math.round(rect.w * pixelRatio);
-  const h = Math.round(rect.h * pixelRatio);
+  const sx = (target.pixelRatio * target.viewportW) / target.w;
+  const sy = (target.pixelRatio * target.viewportH) / target.h;
+  const w = Math.round(rect.w * sx);
+  const h = Math.round(rect.h * sy);
   glw.scissor(
-    Math.round(rect.x * pixelRatio),
-    Math.round(target.h - h - rect.y * pixelRatio),
+    Math.round(rect.x * sx),
+    Math.round(target.viewportH - h - rect.y * sy),
     w,
     h,
   );

@@ -76,6 +76,8 @@ describe('WebGlShaderProgram.bindRenderOp', () => {
     const renderTarget = {
       w: 1920,
       h: 1080,
+      viewportW: 1920,
+      viewportH: 1080,
       pixelRatio: 1.5,
     };
 

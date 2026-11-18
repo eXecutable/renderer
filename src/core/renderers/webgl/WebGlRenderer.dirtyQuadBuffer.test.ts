@@ -123,6 +123,8 @@ const makeRenderer = (
   (renderer as any).renderTarget = {
     w: 0,
     h: 0,
+    viewportW: 0,
+    viewportH: 0,
     pixelRatio: 1,
   };
   (renderer as any).curBufferIdx = 0;

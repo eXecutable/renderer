@@ -2769,11 +2769,17 @@ export class CoreNode extends EventEmitter {
     this.stage.renderer.renderToTexture(this);
   }
 
+  /**
+   * `framebufferDimensions` stays in logical pixels; the GL texture is
+   * allocated at device resolution, matching the main canvas.
+   */
   private createRenderTexture() {
-    this.texture = this.stage.txManager.createTexture(
-      'RenderTexture',
-      this.framebufferDimensions!,
-    );
+    const { w, h } = this.framebufferDimensions!;
+    const pixelRatio = this.stage.pixelRatio;
+    this.texture = this.stage.txManager.createTexture('RenderTexture', {
+      w: Math.round(w * pixelRatio),
+      h: Math.round(h * pixelRatio),
+    });
   }
 
   private cleanupRenderTexture() {

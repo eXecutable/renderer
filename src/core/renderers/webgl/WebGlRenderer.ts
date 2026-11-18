@@ -139,12 +139,19 @@ export type WebGlRenderOp =
  * The framebuffer currently being drawn into: the canvas, or an RTT texture
  * during {@link WebGlRenderer.renderRTTNodes}.
  *
- * `w` / `h` are the framebuffer's size in device pixels; `pixelRatio` maps
- * logical coordinates onto it.
+ * `w` / `h` are the device-pixel extent that logical coordinates map onto
+ * (logical size × pixel ratio). For an RTT this is left unrounded even though
+ * the texture is `Math.round`ed, so the content spans exactly the texture's
+ * 0..1 UV range and isn't stretched when the RTT node samples it.
+ *
+ * `viewportW` / `viewportH` are the framebuffer's integer size, the space
+ * GL scissor boxes are given in.
  */
 export interface RenderTarget {
   w: number;
   h: number;
+  viewportW: number;
+  viewportH: number;
   pixelRatio: number;
 }
 
@@ -320,7 +327,13 @@ export class WebGlRenderer extends CoreRenderer {
    * Framebuffer that render ops currently draw into. Every draw path reads
    * resolution, pixel ratio and the scissor y-flip from here.
    */
-  readonly renderTarget: RenderTarget = { w: 0, h: 0, pixelRatio: 1 };
+  readonly renderTarget: RenderTarget = {
+    w: 0,
+    h: 0,
+    viewportW: 0,
+    viewportH: 0,
+    pixelRatio: 1,
+  };
 
   constructor(stage: Stage) {
     super(stage);
@@ -499,7 +512,7 @@ export class WebGlRenderer extends CoreRenderer {
     // Assumes the canvas is bound: Stage calls renderRTTNodes() after reset(),
     // and that pass switches targets itself and rebinds the canvas when done.
     const { width, height } = glw.canvas;
-    this.updateRenderTarget(width, height, this.stage.pixelRatio);
+    this.updateRenderTarget(width, height, width, height);
     glw.setScissorTest(false);
     glw.setStencilTest(false);
     if (this.stage.options.enableClear !== false) {
@@ -508,30 +521,40 @@ export class WebGlRenderer extends CoreRenderer {
   }
 
   /**
-   * Binds `framebuffer` (`null` = canvas), sets the viewport to its size and
-   * makes it the current {@link renderTarget}.
+   * Binds `framebuffer` (`null` = canvas) and makes it the current
+   * {@link renderTarget}. The viewport is the framebuffer's integer size;
+   * `w` / `h` are the extent logical coordinates map onto (see
+   * {@link RenderTarget}).
    *
    * Ends the current quad and SDF batches: an op from the previous target has
    * already been drawn and must not be extended.
    */
   private setRenderTarget(
     framebuffer: WebGLFramebuffer | null,
-    w: number,
-    h: number,
-    pixelRatio: number,
+    viewportW: number,
+    viewportH: number,
+    w = viewportW,
+    h = viewportH,
   ) {
     this.curRenderOp = null;
     this.curSdfRenderOp = null;
     this.glw.bindFramebuffer(framebuffer);
-    this.glw.viewport(0, 0, w, h);
-    this.updateRenderTarget(w, h, pixelRatio);
+    this.glw.viewport(0, 0, viewportW, viewportH);
+    this.updateRenderTarget(viewportW, viewportH, w, h);
   }
 
-  private updateRenderTarget(w: number, h: number, pixelRatio: number) {
+  private updateRenderTarget(
+    viewportW: number,
+    viewportH: number,
+    w: number,
+    h: number,
+  ) {
     const target = this.renderTarget;
     target.w = w;
     target.h = h;
-    target.pixelRatio = pixelRatio;
+    target.viewportW = viewportW;
+    target.viewportH = viewportH;
+    target.pixelRatio = this.stage.pixelRatio;
   }
 
   createShaderProgram(
@@ -1485,7 +1508,12 @@ export class WebGlRenderer extends CoreRenderer {
       }
 
       // Skip nodes that do not have a loaded texture
-      if (node.texture === null || node.texture.state !== 'loaded') {
+      const fbDims = node.framebufferDimensions;
+      if (
+        node.texture === null ||
+        node.texture.state !== 'loaded' ||
+        fbDims === null
+      ) {
         continue;
       }
 
@@ -1495,11 +1523,13 @@ export class WebGlRenderer extends CoreRenderer {
       const ctxTexture = node.texture.ctxTexture as WebGlCtxRenderTexture;
       this.renderToTextureActive = true;
 
+      const pixelRatio = this.stage.pixelRatio;
       this.setRenderTarget(
         ctxTexture.framebuffer,
         ctxTexture.w,
         ctxTexture.h,
-        1,
+        fbDims.w * pixelRatio,
+        fbDims.h * pixelRatio,
       );
       // Set the clear color to transparent
       glw.clearColor(0, 0, 0, 0);
@@ -1559,12 +1589,7 @@ export class WebGlRenderer extends CoreRenderer {
     // Restore the default clear color
     glw.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
 
-    this.setRenderTarget(
-      null,
-      glw.canvas.width,
-      glw.canvas.height,
-      this.stage.pixelRatio,
-    );
+    this.setRenderTarget(null, glw.canvas.width, glw.canvas.height);
     this.renderToTextureActive = false;
   }
 

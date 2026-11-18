@@ -618,7 +618,7 @@ describe('RTT — scissor inside a framebuffer', () => {
 
   it('flips the scissor y against the render target, not the node height', () => {
     const scissor = drawClipped(
-      { w: 400, h: 300, pixelRatio: 1 },
+      { w: 400, h: 300, viewportW: 400, viewportH: 300, pixelRatio: 1 },
       { x: 10, y: 50, w: 200, h: 100 },
     );
 
@@ -627,11 +627,28 @@ describe('RTT — scissor inside a framebuffer', () => {
 
   it('scales the scissor rect by the render target pixel ratio', () => {
     const scissor = drawClipped(
-      { w: 200, h: 150, pixelRatio: 0.5 },
+      { w: 200, h: 150, viewportW: 200, viewportH: 150, pixelRatio: 0.5 },
       { x: 10, y: 50, w: 200, h: 100 },
     );
 
     expect(scissor).toHaveBeenCalledWith(5, 75, 100, 50);
+  });
+
+  it('flips against the rounded viewport of a fractional RTT extent', () => {
+    // 212 logical px at 2/3 = 141.33 device px, allocated as 141.
+    const scissor = drawClipped(
+      {
+        w: 1920 * (2 / 3),
+        h: 212 * (2 / 3),
+        viewportW: 1280,
+        viewportH: 141,
+        pixelRatio: 2 / 3,
+      },
+      { x: 0, y: 10, w: 1920, h: 10 },
+    );
+
+    // Geometry spans GL rows 127.7..134.35; flipping against 141.33 gave 128.
+    expect(scissor).toHaveBeenCalledWith(0, 127, 1280, 7);
   });
 
   it('disables the scissor before clearing an RTT framebuffer', () => {
@@ -673,6 +690,8 @@ describe('RTT — scissor inside a framebuffer', () => {
       renderTarget: {
         w: 1920,
         h: 1080,
+        viewportW: 1920,
+        viewportH: 1080,
         pixelRatio: 1,
       },
       stage,
@@ -680,11 +699,118 @@ describe('RTT — scissor inside a framebuffer', () => {
 
     r.renderRTTNodes();
 
-    expect(calls).toEqual(['scissor:false', 'clear', 'target:100x100']);
+    const extent = 100 * stage.pixelRatio;
+    expect(calls).toEqual([
+      'scissor:false',
+      'clear',
+      `target:${extent}x${extent}`,
+    ]);
     expect(r.renderTarget).toEqual({
       w: 1920,
       h: 1080,
+      viewportW: 1920,
+      viewportH: 1080,
       pixelRatio: stage.pixelRatio,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Device pixel ratio inside RTT
+// ---------------------------------------------------------------------------
+
+describe('RTT — device pixel ratio', () => {
+  const makeRatioStage = (pixelRatio: number) => {
+    const createTexture = vi.fn().mockReturnValue({
+      state: 'loaded',
+      dimensions: { w: 1, h: 1 },
+      on: vi.fn(),
+      off: vi.fn(),
+      setRenderableOwner: vi.fn(),
+    });
+    const stage = makeMockStage({
+      pixelRatio,
+      txManager: { createTexture } as unknown as Stage['txManager'],
+    });
+    return { stage, createTexture };
+  };
+
+  it('allocates the framebuffer at device resolution', () => {
+    const { stage, createTexture } = makeRatioStage(2 / 3);
+    const node = new CoreNode(stage, {
+      ...makeDefaultProps(),
+      w: 1920,
+      h: 212,
+    });
+
+    node.rtt = true;
+
+    expect(createTexture).toHaveBeenLastCalledWith('RenderTexture', {
+      w: 1280,
+      h: 141,
+    });
+    expect(node.framebufferDimensions).toEqual({ w: 1920, h: 212 });
+
+    node.w = 960;
+
+    expect(createTexture).toHaveBeenLastCalledWith('RenderTexture', {
+      w: 640,
+      h: 141,
+    });
+  });
+
+  it('maps content onto the unrounded extent of a rounded texture', () => {
+    const { stage } = makeRatioStage(2 / 3);
+    const node = new CoreNode(stage, makeDefaultProps());
+    node.hasRTTupdates = true;
+    node.worldAlpha = 1;
+    node.renderState = CoreNodeRenderState.InViewport;
+    node['props'].texture = {
+      state: 'loaded',
+      ctxTexture: { framebuffer: {}, w: 1280, h: 141 },
+    } as unknown as CoreNodeProps['texture'];
+    node.framebufferDimensions = { w: 1920, h: 212 };
+
+    const viewport = vi.fn();
+    let targetDuringPass: unknown;
+    const r = Object.create(WebGlRenderer.prototype) as WebGlRenderer;
+    Object.assign(r, {
+      glw: {
+        canvas: { width: 1280, height: 720 },
+        bindFramebuffer: vi.fn(),
+        viewport,
+        clearColor: vi.fn(),
+        setScissorTest: vi.fn(),
+        clear: vi.fn(),
+      },
+      rttNodes: [node],
+      renderOps: [],
+      useDirtyRepaints: false,
+      clearColor: { normalized: [0, 0, 0, 0] },
+      _sdfBufferPlain: null,
+      _sdfBufferRich: null,
+      render: vi.fn(() => {
+        targetDuringPass = { ...r.renderTarget };
+      }),
+      renderTarget: {
+        w: 1280,
+        h: 720,
+        viewportW: 1280,
+        viewportH: 720,
+        pixelRatio: 2 / 3,
+      },
+      stage,
+    });
+
+    r.renderRTTNodes();
+
+    expect(viewport).toHaveBeenNthCalledWith(1, 0, 0, 1280, 141);
+    expect(targetDuringPass).toEqual({
+      w: 1920 * (2 / 3),
+      h: 212 * (2 / 3),
+      viewportW: 1280,
+      viewportH: 141,
+      pixelRatio: 2 / 3,
     });
   });
 });
@@ -729,7 +855,7 @@ describe('RTT — batching across render targets', () => {
       clearColor: { normalized: [0, 0, 0, 0] },
       _sdfBufferPlain: null,
       _sdfBufferRich: null,
-      renderTarget: { w: 0, h: 0, pixelRatio: 1 },
+      renderTarget: { w: 0, h: 0, viewportW: 0, viewportH: 0, pixelRatio: 1 },
       stage,
       render: vi.fn(() => {
         batchAtPassStart.push(r.curRenderOp);
